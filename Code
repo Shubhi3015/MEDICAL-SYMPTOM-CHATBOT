@@ -1,0 +1,94 @@
+from openai import OpenAI
+import gradio as gr
+import pyttsx3
+import speech_recognition as sr
+
+key = "YOUR_API_KEY"
+gemini_model = OpenAI(api_key=key, base_url="https://generativelanguage.googleapis.com/v1beta/openai/")
+
+recognizer = sr.Recognizer()
+microphone = sr.Microphone()
+
+
+engine = pyttsx3.init()
+engine.setProperty('rate', 175)
+
+def symptom_checker(user_input, history):
+    if history is None:
+        history = []
+
+    messages = [
+        {"role": "system", "content": (
+            "you are helpful and careful medical assistance. "
+            "you do not diagnose diseases but provide general health advice based on symptoms. "
+            "always recommend consulting a doctor for serious or persistance issues. "
+            "if the symptoms are severe, suggest visiting a hospital or calling emergency services. "
+            "avoid giving exact medical diagnoses or medication names."
+        )}
+    ]
+
+    for human, bot in history:
+        messages.append({"role": "user", "content": human})
+        messages.append({"role": "assistant", "content": bot})
+
+    messages.append({"role": "user", "content": user_input})
+
+    try:
+        response = gemini_model.chat.completions.create(
+            model="gemini-2.5-flash",
+            messages=messages
+        )
+        reply = response.choices[0].message.content.strip()
+    except Exception as e:
+        reply = f"Error: {str(e)}"
+
+    history.append((user_input, reply))
+    return history, history, reply
+
+def record_voice():
+    with microphone as source:
+        print("🎙️ Listening...")
+        recognizer.adjust_for_ambient_noise(source)
+        audio = recognizer.listen(source)
+
+    try:
+        text = recognizer.recognize_google(audio)
+        print(f"🗣️ You said: {text}")
+        return text
+    except sr.UnknownValueError:
+        return "Sorry, I could not understand the audio."
+    except sr.RequestError as e:
+        return f"Speech recognition error: {e}"
+
+def speak_response(response_text):
+     engine.say(response_text)
+    engine.runAndWait()
+
+with gr.Blocks() as demo:
+    gr.Markdown("## 🩺 Medical Symptom Checker Chatbot")
+    gr.Markdown("*Describe your symptoms below or use the microphone. You can also hear the response by clicking the speaker.*\n\n⚠️ This is **not medical advice**. Always consult a doctor.")
+
+    chatbot = gr.Chatbot()
+    state = gr.State([])
+    current_response = gr.Textbox(visible=False)  # store latest bot reply for speaking
+
+    user_input = gr.Textbox(
+        placeholder="Type or use mic: 'I have a headache and fever'",
+        label="Your symptoms",
+        show_label=True
+    )
+
+    with gr.Row():
+        mic_button = gr.Button("🎤 Use Microphone")
+        speak_button = gr.Button("🔊 Speak Response")
+
+
+    user_input.submit(symptom_checker, [user_input, state], [chatbot, state, current_response])
+
+
+    mic_button.click(record_voice, outputs=user_input)
+
+
+    speak_button.click(speak_response, inputs=current_response)
+
+demo.launch()
